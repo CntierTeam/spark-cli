@@ -79,7 +79,21 @@ echo "Release: $tag_name"
 
 pick_url() {
   local name="$1"
-  printf '%s' "$json" | tr '\n' ' ' | sed 's/},{/}\n{/g' |
+  # Pretty-printed GitHub JSON breaks naive sed; parse assets by exact name.
+  if command -v python3 >/dev/null 2>&1; then
+    printf '%s' "$json" | python3 -c '
+import json, sys
+name = sys.argv[1]
+data = json.load(sys.stdin)
+for asset in data.get("assets") or []:
+    if asset.get("name") == name:
+        print(asset["browser_download_url"])
+        break
+' "$name"
+    return
+  fi
+  # Fallback: split assets objects, then extract URL from the matching object only.
+  printf '%s' "$json" | tr '\n' ' ' | sed 's/},[[:space:]]*{/}\n{/g' |
     grep -F "\"name\": \"$name\"" |
     sed -n 's/.*"browser_download_url":[[:space:]]*"\([^"]*\)".*/\1/p' |
     head -1
@@ -103,13 +117,27 @@ tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
 echo "Downloading: $url"
-curl -fL --progress-bar -o "$tmpdir/$ASSET" "$url"
+if command -v gh >/dev/null 2>&1; then
+  # Prefer gh (auth + API) when available; GitHub CDN can stall for anonymous curl.
+  (
+    cd "$tmpdir"
+    gh release download "$tag_name" -R "$REPO" -p "$ASSET" -p "${ASSET}.sha256" 2>/dev/null \
+      || gh release download "$tag_name" -R "$REPO" -p "$ASSET"
+  )
+else
+  curl -fL --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 \
+    --max-time 300 -o "$tmpdir/$ASSET" "$url"
+fi
 
 # Optional checksum verify
-sum_url="$(pick_url "${ASSET}.sha256" || true)"
-if [[ -n "${sum_url:-}" ]] && command -v sha256sum >/dev/null 2>&1; then
-  curl -fsSL -o "$tmpdir/${ASSET}.sha256" "$sum_url"
+if [[ -f "$tmpdir/${ASSET}.sha256" ]] && command -v sha256sum >/dev/null 2>&1; then
   (cd "$tmpdir" && sha256sum -c "${ASSET}.sha256")
+else
+  sum_url="$(pick_url "${ASSET}.sha256" || true)"
+  if [[ -n "${sum_url:-}" ]] && command -v sha256sum >/dev/null 2>&1; then
+    curl -fsSL --retry 3 -o "$tmpdir/${ASSET}.sha256" "$sum_url"
+    (cd "$tmpdir" && sha256sum -c "${ASSET}.sha256")
+  fi
 fi
 
 mkdir -p "$INSTALL_DIR"
