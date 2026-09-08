@@ -1,0 +1,5 @@
+display_name: spark-dump
+short_description: lucko spark profile CLI — dump, filters, plugin occupancy
+default_prompt: >-
+  Follow the spark-dump skill. Prefer the spark-dump binary for .sparkprofile /
+  .sparkheap analysis; use plugins/threads/flat views and report %plugins vs %thread clearly.

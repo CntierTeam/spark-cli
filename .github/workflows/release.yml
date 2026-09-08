@@ -1,0 +1,142 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to create/attach (e.g. v1.1.0). Leave empty to use an existing tag on this ref."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.asset }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset: spark-dump-linux-x86_64-gnu
+            binary: spark-dump
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            asset: spark-dump-linux-x86_64-musl
+            binary: spark-dump
+            musl: true
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: spark-dump-windows-x86_64.exe
+            binary: spark-dump.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tools
+        if: matrix.musl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Stage asset (unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/${{ matrix.asset }}"
+          chmod +x "dist/${{ matrix.asset }}"
+          # Convenience alias: static musl also as spark-dump-linux-x86_64
+          if [ "${{ matrix.musl }}" = "true" ]; then
+            cp "dist/${{ matrix.asset }}" dist/spark-dump-linux-x86_64
+          fi
+          (cd dist && sha256sum "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256")
+          ls -lh dist/
+
+      - name: Stage asset (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/${{ matrix.asset }}"
+          Get-FileHash "dist/${{ matrix.asset }}" -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  ${{ matrix.asset }}" } |
+            Set-Content -NoNewline "dist/${{ matrix.asset }}.sha256"
+          Get-ChildItem dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: |
+            dist/${{ matrix.asset }}
+            dist/${{ matrix.asset }}.sha256
+            dist/spark-dump-linux-x86_64
+          if-no-files-found: warn
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            echo "error: push a v* tag or pass workflow_dispatch.tag" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Download all assets
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten assets
+        run: |
+          mkdir -p dist
+          find artifacts -type f -print
+          find artifacts -type f -exec cp -v {} dist/ \;
+          ls -lh dist/
+
+      - name: Create / update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: spark-dump ${{ steps.tag.outputs.tag }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/spark-dump-linux-x86_64
+            dist/spark-dump-linux-x86_64-gnu
+            dist/spark-dump-linux-x86_64-musl
+            dist/spark-dump-windows-x86_64.exe
+            dist/*.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
