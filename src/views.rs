@@ -240,10 +240,13 @@ fn render_summary(
         ));
     }
     if graph.time_windows.len() > 1 {
+        let mut sel: Vec<_> = windows.iter().copied().collect();
+        sel.sort_unstable();
         lines.push(format!(
-            "Time windows: {} ids {:?}",
+            "Time windows: selected {}/{} indices {:?} (ids via `spark-dump windows`)",
+            sel.len(),
             graph.time_windows.len(),
-            graph.time_windows
+            sel
         ));
     }
     lines.join("\n") + "\n"

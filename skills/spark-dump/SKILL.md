@@ -3,9 +3,9 @@ name: spark-dump
 description: >-
   Analyze lucko spark profiler dumps with the spark-dump Rust CLI (.sparkprofile /
   .sparkheap / .sparkhealth). Covers views (all/flat/sources/flame), filters, plugin
-  occupancy, multi-thread ranking, and Codex skill install. Trigger on: spark-dump,
-  sparkprofile, sparkheap, spark-viewer, lucko spark, plugin occupancy, Sources view,
-  Folia profiler, Minecraft sampler dump.
+  occupancy, multi-thread ranking, Refine time windows, and Codex skill install.
+  Trigger on: spark-dump, sparkprofile, sparkheap, spark-viewer, lucko spark,
+  plugin occupancy, Sources view, Folia profiler, Minecraft sampler dump, time window.
 license: MIT
 metadata:
   short-description: lucko spark profile CLI dump & analysis
@@ -60,6 +60,7 @@ cargo build --release
 | Sources (same data) | `spark-dump profile <file> --view sources` |
 | Flame | `spark-dump profile <file> --view flame --thread '…'` |
 | Thread list | `spark-dump threads <file>` |
+| Time windows (Refine) | `spark-dump windows <file>` then `--windows @N` |
 | Meta/widgets | `spark-dump meta <file>` |
 | Heap | `spark-dump heap <file> -s Entity` |
 | Health | `spark-dump health <file>` |
@@ -71,14 +72,14 @@ cargo build --release
 - `--thread` — keep matching threads
 - `--include` / `--exclude` — stack whitelist/blacklist (repeatable); `--regex` optional
 - `--top-threads` / `--min-thread-percent` — multi-thread cut
-- `--windows` / `--window-range` — Refine time windows
+- `--windows` / `--window-range` — Refine time windows (`@N` index or id; list with `windows`)
 - `--depth` / `--min-percent` / `--top` — tree / flat size
 
 ## Typical agent workflow
 
 1. Confirm input is `.sparkprofile` / `.sparkheap` / `.sparkhealth` (or bytebin code).
-2. `spark-dump dump <file>` or `threads <file>` for orientation.
-3. For lag: `plugins <file> --thread 'Folia Region'` then `profile --view flat --thread … --exclude native`.
+2. `spark-dump dump <file>` or `threads <file>` for orientation; if multi-window, `windows <file> --top 10`.
+3. For lag: `plugins <file> --thread 'Folia Region'` then `profile --view flat --thread … --exclude native` (optionally `--windows @N`).
 4. Quote **plugin name + %plugins + hot methods**; mention large unattributed/native share when relevant.
 5. Prefer `-o out.txt` for large dumps; use `-f json` only when scripting.
 

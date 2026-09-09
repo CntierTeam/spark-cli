@@ -3,7 +3,11 @@ use crate::cli::FilterPat;
 #[derive(Debug, Clone)]
 pub enum WindowSelect {
     All,
+    /// Match `timeWindows` ids (web Refine ids)
     Ids(Vec<i32>),
+    /// Explicit indices into `times[]` / `timeWindows`
+    Indices(Vec<usize>),
+    /// Inclusive index range into `timeWindows`
     Range(usize, usize),
 }
 

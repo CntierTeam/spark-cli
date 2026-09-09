@@ -5,8 +5,9 @@
 ```text
 spark-dump dump <input>       Auto-detect sampler/heap/health
 spark-dump profile <input>    Sampler views
+spark-dump windows <input>    Refine time-window list (idx/id/share)
 spark-dump plugins <input>    Plugin/mod occupancy (Sources)
-spark-dump threads <input>    Ranked thread list
+spark-dump threads <input>    Ranked thread list (--windows supported)
 spark-dump heap <input>       Heap histogram
 spark-dump health <input>     Health report
 spark-dump meta <input>       Metadata / widgets only
@@ -25,6 +26,18 @@ spark-dump tutorial [topic]   overview|views|filters|examples|commands
 | `flat` | Aggregated methods (`--flat-mode self-time\|total-time`, `--bottom-up`) |
 | `sources` | Same data as `plugins` |
 | `flame` | ASCII flame; defaults to heaviest thread |
+
+## Time windows (Refine)
+
+Continuous profiles split samples into ~1m buckets. List then select:
+
+```bash
+spark-dump windows ./x.sparkprofile --top 10
+spark-dump profile ./x.sparkprofile --windows @12 --view flat
+spark-dump threads ./x.sparkprofile --window-range 10,15
+```
+
+`--windows` accepts `all`, Refine ids, or indices (`@12` / `i12` / `@10,@11`).
 
 ## plugins columns
 

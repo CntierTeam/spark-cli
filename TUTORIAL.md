@@ -11,7 +11,7 @@
 - 按插件/模组归类（Sources）
 - 火焰图（Flame）
 - 搜索与过滤器（Search / include / exclude / thread）
-- 时间窗 Refine（`--windows`）
+- 时间窗 Refine（`windows` + `--windows @N` / `--window-range`）
 
 ## 2. 子命令一览
 
@@ -19,6 +19,9 @@
 |------|------|
 | `dump` | 自动识别类型并输出 |
 | `profile` | Sampler 全功能视图 |
+| `windows` | Refine 时间窗列表（idx / id / 占比） |
+| `threads` | 线程耗时排名（支持时间窗） |
+| `plugins` | 插件/模组占用 |
 | `heap` | Heap 直方图 + 搜索 |
 | `health` | Health 报告 |
 | `raw` | 结构化 JSON |
@@ -58,9 +61,16 @@ spark-dump profile file.sparkprofile --view flame --thread "Region Scheduler"
 | `--include` | 白名单（可重复） |
 | `--exclude` | 黑名单（可重复） |
 | `--regex` | 上述模式按正则 |
-| `--windows` | 时间窗 id 列表或 `all` |
-| `--window-range` | 按下标范围选窗 |
+| `--windows` | `all` / Refine id / 下标 `@N` `iN` |
+| `--window-range` | 按下标闭区间选窗 |
 | `--depth` / `--min-percent` / `--top` | 裁剪 |
+
+先列窗再钻取：
+```bash
+spark-dump windows x.sparkprofile --top 10 --commands
+spark-dump profile x.sparkprofile --windows @3 --view flat --top 40
+spark-dump threads x.sparkprofile --window-range 10,15
+```
 
 示例：
 ```bash

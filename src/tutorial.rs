@@ -33,7 +33,7 @@ spark-dump 是 lucko spark-viewer 的 CLI 版：同一套 protobuf schema，
 | Flame graph                | profile --view flame                     |
 | Search bar                 | --search / -s                            |
 | Thread filter (mental)     | --thread                                 |
-| Refine time windows        | --windows / --window-range               |
+| Refine time windows        | windows + --windows / --window-range     |
 | Merge mode                 | --sources-mode merge|separate            |
 | Bottom-up                  | --bottom-up                              |
 | Metadata / widgets         | meta 或 profile 默认 header              |
@@ -90,9 +90,16 @@ const FILTERS: &str = r#"# Filters
 ## --top-threads / --min-thread-percent
 多线程 profile 时按耗时排序，只 dump 最热的 N 条线程，或丢掉占比过低的线程。
 
-  spark-dump threads ./x.sparkprofile
-  spark-dump profile ./x.sparkprofile --view flat --top-threads 10
-  spark-dump profile ./x.sparkprofile --view flame --thread "Folia Region"
+## --windows / --window-range   （Web Refine）
+连续 profiling 会切成多个时间窗（约 1 分钟/窗）：
+
+  spark-dump windows ./x.sparkprofile
+  spark-dump windows ./x.sparkprofile --top 5 --commands
+  spark-dump profile ./x.sparkprofile --windows @12 --view flat
+  spark-dump threads ./x.sparkprofile --window-range 10,15
+
+`--windows`：`all` | Refine id | 下标 `@12` / `i12` / `@10,@11`
+`--window-range start,end`：按下标闭区间。
 "#;
 
 const EXAMPLES: &str = r#"# Examples
@@ -126,21 +133,29 @@ spark-dump heap ./x.sparkheap -s Entity --top 50
 
 # 9) 只要元数据
 spark-dump meta ./x.sparkprofile
+
+# 10) 按时间窗 Refine（连续 profiling）
+spark-dump windows ./cRaewtx7pS.sparkprofile --top 10
+spark-dump profile ./cRaewtx7pS.sparkprofile --windows @3 --view flat --top 30
+spark-dump threads ./cRaewtx7pS.sparkprofile --window-range 0,5
 "#;
 
 const COMMANDS: &str = r#"# Commands
 
 spark-dump dump    <file|code>   自动识别类型
 spark-dump profile <file|code>   Sampler 全功能
+spark-dump windows <file|code>   Refine 时间窗列表
+spark-dump threads <file|code>   线程耗时（支持 --windows）
 spark-dump heap    <file|code>   Heap 直方图
 spark-dump health  <file|code>   Health 报告
 spark-dump raw     <file|code>   结构化 JSON
 spark-dump meta    <file|code>   仅元数据/widgets
+spark-dump plugins <file|code>   插件占用
 spark-dump tutorial [topic]
 
 全局常用：
   -o/--out  -f/--format text|json
   -s/--search  --thread  --include  --exclude  --regex
   --depth  --min-percent  --top
-  --windows  --window-range
+  --windows  --window-range   (@N 或 id)
 "#;

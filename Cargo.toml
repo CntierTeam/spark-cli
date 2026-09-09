@@ -1,6 +1,6 @@
 [package]
 name = "spark-dump"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 description = "Full-featured CLI for lucko spark profiles (viewer-parity dump/filter/views)"
 license = "GPL-3.0-or-later"

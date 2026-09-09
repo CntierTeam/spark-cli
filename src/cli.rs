@@ -44,6 +44,8 @@ pub enum Command {
     },
     /// List threads ranked by time (multi-thread profiles)
     Threads(ThreadsArgs),
+    /// List Refine time windows (index / id / share) — web timeline buckets
+    Windows(WindowsArgs),
     /// Plugin/mod occupancy (web Sources view)
     Plugins(PluginsArgs),
 }
@@ -118,6 +120,7 @@ pub struct FilterArgs {
     #[arg(long, default_value_t = 250)]
     pub top: usize,
     /// Time window ids (comma-separated) or "all". Aligns with web Refine.
+    /// Prefer indices with `@0,@3` / `i0,i3` when picking from `windows` output.
     #[arg(long)]
     pub windows: Option<String>,
     /// Time window index range: start,end (inclusive indices into timeWindows)
@@ -132,10 +135,22 @@ pub struct FilterArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct WindowFilterArgs {
+    /// Time window ids (`29815743`), indices (`@0,@3` / `i0,i3`), or `all`
+    #[arg(long)]
+    pub windows: Option<String>,
+    /// Inclusive index range: start,end
+    #[arg(long)]
+    pub window_range: Option<String>,
+}
+
+#[derive(Args, Debug)]
 pub struct ThreadsArgs {
     pub input: String,
     #[command(flatten)]
     pub out: CommonOut,
+    #[command(flatten)]
+    pub window: WindowFilterArgs,
     /// Substring / regex filter on thread name
     #[arg(long, short = 's')]
     pub search: Option<String>,
@@ -144,6 +159,22 @@ pub struct ThreadsArgs {
     /// Show top N (default 50, 0 = all)
     #[arg(long, default_value_t = 50)]
     pub top: usize,
+}
+
+#[derive(Args, Debug)]
+pub struct WindowsArgs {
+    pub input: String,
+    #[command(flatten)]
+    pub out: CommonOut,
+    /// Show only top N hottest windows (0 = all)
+    #[arg(long, default_value_t = 0)]
+    pub top: usize,
+    /// Hide windows below this % of profile total
+    #[arg(long, default_value_t = 0.0)]
+    pub min_percent: f64,
+    /// Also print ready-to-run profile commands for each shown window
+    #[arg(long)]
+    pub commands: bool,
 }
 
 #[derive(Args, Debug)]
@@ -307,7 +338,7 @@ fn build_filter(f: &FilterArgs) -> Result<FilterOpts, Box<dyn std::error::Error>
         .as_ref()
         .map(|s| compile_pat(s, f.regex))
         .transpose()?;
-    let windows = parse_windows(f)?;
+    let windows = parse_window_select(f.windows.as_deref(), f.window_range.as_deref())?;
     Ok(FilterOpts {
         search: f.search.clone().map(|s| s.to_ascii_lowercase()),
         thread,
@@ -322,8 +353,11 @@ fn build_filter(f: &FilterArgs) -> Result<FilterOpts, Box<dyn std::error::Error>
     })
 }
 
-fn parse_windows(f: &FilterArgs) -> Result<WindowSelect, Box<dyn std::error::Error>> {
-    if let Some(range) = &f.window_range {
+fn parse_window_select(
+    windows: Option<&str>,
+    window_range: Option<&str>,
+) -> Result<WindowSelect, Box<dyn std::error::Error>> {
+    if let Some(range) = window_range {
         let parts: Vec<_> = range.split(',').collect();
         if parts.len() != 2 {
             return Err("--window-range expects start,end".into());
@@ -332,14 +366,68 @@ fn parse_windows(f: &FilterArgs) -> Result<WindowSelect, Box<dyn std::error::Err
         let b: usize = parts[1].trim().parse()?;
         return Ok(WindowSelect::Range(a, b));
     }
-    if let Some(w) = &f.windows {
+    if let Some(w) = windows {
         if w.eq_ignore_ascii_case("all") {
             return Ok(WindowSelect::All);
         }
-        let ids: Result<Vec<i32>, _> = w.split(',').map(|x| x.trim().parse()).collect();
-        return Ok(WindowSelect::Ids(ids?));
+        let tokens: Vec<&str> = w.split(',').map(|x| x.trim()).filter(|x| !x.is_empty()).collect();
+        if tokens.is_empty() {
+            return Err("--windows is empty".into());
+        }
+        let index_like = tokens.iter().all(|t| {
+            t.starts_with('@')
+                || t.starts_with('i')
+                || t.starts_with('I')
+        });
+        if index_like {
+            let mut idxs = Vec::new();
+            for t in tokens {
+                let num = t
+                    .trim_start_matches(['@', 'i', 'I'])
+                    .parse::<usize>()
+                    .map_err(|_| format!("invalid window index token '{t}' (use @0 or i0)"))?;
+                idxs.push(num);
+            }
+            return Ok(WindowSelect::Indices(idxs));
+        }
+        let ids: Result<Vec<i32>, _> = tokens.iter().map(|x| x.parse()).collect();
+        return Ok(WindowSelect::Ids(ids.map_err(|e| {
+            format!("invalid --windows value (use ids or @index): {e}")
+        })?));
     }
     Ok(WindowSelect::All)
+}
+
+fn resolve_windows(
+    graph: &ProfileGraph,
+    sel: &WindowSelect,
+) -> Result<std::collections::HashSet<usize>, Box<dyn std::error::Error>> {
+    let set = graph.selected_window_indices(sel);
+    if set.is_empty() {
+        return Err(format!(
+            "no time windows matched selection (profile has {} window(s); try `spark-dump windows <file>`)",
+            graph.window_count()
+        )
+        .into());
+    }
+    Ok(set)
+}
+
+fn fmt_offset_ms(ms: i64) -> String {
+    if ms < 0 {
+        return "-".into();
+    }
+    let s = ms / 1000;
+    let h = s / 3600;
+    let m = (s % 3600) / 60;
+    let sec = s % 60;
+    if h > 0 {
+        format!("{h}h{m:02}m{sec:02}s")
+    } else if m > 0 {
+        format!("{m}m{sec:02}s")
+    } else {
+        format!("{sec}s")
+    }
 }
 
 fn view_of(v: &ViewArg) -> ProfileView {
@@ -389,6 +477,7 @@ pub fn run_profile(args: ProfileArgs) -> Result<(), Box<dyn std::error::Error>> 
     let bytes = load_bytes(&args.input)?;
     let graph = ProfileGraph::from_sampler_bytes(&bytes)?;
     let filter = build_filter(&args.filter)?;
+    let _ = resolve_windows(&graph, &filter.windows)?;
     let render_opts = RenderOpts {
         format: format_of(&args.out.format),
         label: match args.label {
@@ -459,7 +548,8 @@ pub fn run_threads(args: ThreadsArgs) -> Result<(), Box<dyn std::error::Error>> 
         .as_ref()
         .map(|s| compile_pat(s, args.regex))
         .transpose()?;
-    let windows = graph.selected_window_indices(&WindowSelect::All);
+    let sel = parse_window_select(args.window.windows.as_deref(), args.window.window_range.as_deref())?;
+    let windows = resolve_windows(&graph, &sel)?;
     let mut rows: Vec<_> = graph
         .threads
         .iter()
@@ -473,11 +563,14 @@ pub fn run_threads(args: ThreadsArgs) -> Result<(), Box<dyn std::error::Error>> 
     if args.top > 0 {
         rows.truncate(args.top);
     }
+    let mut sel_idxs: Vec<_> = windows.iter().copied().collect();
+    sel_idxs.sort_unstable();
     if matches!(args.out.format, FormatArg::Json) {
         let v = serde_json::json!({
             "thread_count": graph.threads.len(),
             "shown": rows.len(),
             "total_time": total,
+            "windows_selected": sel_idxs,
             "threads": rows.iter().map(|(time, name, children)| serde_json::json!({
                 "name": name,
                 "time": time,
@@ -494,6 +587,14 @@ pub fn run_threads(args: ThreadsArgs) -> Result<(), Box<dyn std::error::Error>> 
         graph.threads.len(),
         rows.len()
     ));
+    if graph.window_count() > 1 {
+        lines.push(format!(
+            "Windows selected: {} / {}  indices {:?}",
+            windows.len(),
+            graph.window_count(),
+            sel_idxs
+        ));
+    }
     lines.push(format!(
         "{:>8}  {:>10}  {:>8}  name",
         "%", "time", "roots"
@@ -513,10 +614,115 @@ pub fn run_threads(args: ThreadsArgs) -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
+pub fn run_windows(args: WindowsArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = load_bytes(&args.input)?;
+    let graph = ProfileGraph::from_sampler_bytes(&bytes)?;
+    let mut rows = graph.window_times();
+    let total: f64 = rows.iter().map(|r| r.2).sum();
+    rows.sort_by(|a, b| {
+        b.2.partial_cmp(&a.2)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    if args.min_percent > 0.0 && total > 0.0 {
+        rows.retain(|r| 100.0 * r.2 / total >= args.min_percent);
+    }
+    if args.top > 0 {
+        rows.truncate(args.top);
+    }
+    let n = graph.window_count();
+    let win_ms = if n > 0 && graph.meta.duration_ms > 0 {
+        graph.meta.duration_ms as f64 / n as f64
+    } else {
+        0.0
+    };
+
+    if matches!(args.out.format, FormatArg::Json) {
+        let v = serde_json::json!({
+            "window_count": n,
+            "total_time": total,
+            "duration_ms": graph.meta.duration_ms,
+            "start_time_ms": graph.meta.start_time_ms,
+            "windows": rows.iter().map(|(idx, id, time)| {
+                let pct = if total > 0.0 { 100.0 * time / total } else { 0.0 };
+                let approx_start = if win_ms > 0.0 {
+                    Some(graph.meta.start_time_ms + (*idx as f64 * win_ms) as i64)
+                } else {
+                    None
+                };
+                serde_json::json!({
+                    "index": idx,
+                    "id": id,
+                    "time": time,
+                    "percent": pct,
+                    "approx_start_ms": approx_start,
+                    "select": format!("@{idx}"),
+                    "window_range": format!("{idx},{idx}"),
+                })
+            }).collect::<Vec<_>>(),
+        });
+        write_out(&args.out.out, &(serde_json::to_string_pretty(&v)? + "\n"))?;
+        return Ok(());
+    }
+
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "=== Time windows ({} total, showing {}; Refine buckets ≈1m each) ===",
+        n,
+        rows.len()
+    ));
+    if graph.meta.duration_ms > 0 {
+        lines.push(format!(
+            "Profile duration: {}  start_ms={}",
+            fmt_offset_ms(graph.meta.duration_ms),
+            graph.meta.start_time_ms
+        ));
+    }
+    lines.push(format!(
+        "{:>5}  {:>12}  {:>8}  {:>10}  {:>10}  select",
+        "idx", "id", "%", "time", "t+offset"
+    ));
+    for (idx, id, time) in &rows {
+        let pct = if total > 0.0 {
+            100.0 * time / total
+        } else {
+            0.0
+        };
+        let id_s = id.map(|v| v.to_string()).unwrap_or_else(|| "-".into());
+        let offset = if win_ms > 0.0 {
+            fmt_offset_ms((*idx as f64 * win_ms) as i64)
+        } else {
+            "-".into()
+        };
+        lines.push(format!(
+            "{:>5}  {:>12}  {:>7.1}%  {:>10}  {:>10}  --windows @{idx}",
+            idx, id_s, pct, *time as i64, offset
+        ));
+    }
+    if args.commands {
+        lines.push(String::new());
+        lines.push("Commands:".into());
+        for (idx, _, _) in &rows {
+            lines.push(format!(
+                "  spark-dump profile {} --windows @{idx} --view flat --top 40",
+                args.input
+            ));
+        }
+    } else if n > 1 {
+        lines.push(String::new());
+        lines.push("Tip: spark-dump profile <file> --windows @N --view flat".into());
+        lines.push("     spark-dump threads <file> --window-range N,N".into());
+        lines.push("     spark-dump windows <file> --commands".into());
+    }
+    write_out(&args.out.out, &(lines.join("\n") + "\n"))?;
+    Ok(())
+}
+
 pub fn run_plugins(args: PluginsArgs) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = load_bytes(&args.input)?;
     let graph = ProfileGraph::from_sampler_bytes(&bytes)?;
     let filter = build_filter(&args.filter)?;
+    let _ = resolve_windows(&graph, &filter.windows)?;
     let render_opts = RenderOpts {
         format: format_of(&args.out.format),
         label: LabelMode::Percent,

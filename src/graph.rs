@@ -105,11 +105,8 @@ impl Node {
     }
 
     pub fn time_for(&self, selected: &HashSet<usize>) -> f64 {
-        if self.times.is_empty() {
+        if self.times.is_empty() || selected.is_empty() {
             return 0.0;
-        }
-        if selected.is_empty() {
-            return self.times.iter().sum();
         }
         self.times
             .iter()
@@ -158,19 +155,19 @@ impl ProfileGraph {
         }
     }
 
+    /// Number of `times[]` buckets (1 when profile has no window ids).
+    pub fn window_count(&self) -> usize {
+        if self.time_windows.is_empty() {
+            1
+        } else {
+            self.time_windows.len()
+        }
+    }
+
     pub fn selected_window_indices(&self, sel: &WindowSelect) -> HashSet<usize> {
-        let n = self.time_windows.len();
+        let n = self.window_count();
         match sel {
-            WindowSelect::All => {
-                if n == 0 {
-                    // times[] may still have a single bucket with no window ids
-                    let mut s = HashSet::new();
-                    s.insert(0);
-                    s
-                } else {
-                    (0..n).collect()
-                }
-            }
+            WindowSelect::All => (0..n).collect(),
             WindowSelect::Ids(ids) => {
                 let mut set = HashSet::new();
                 for (i, wid) in self.time_windows.iter().enumerate() {
@@ -178,26 +175,42 @@ impl ProfileGraph {
                         set.insert(i);
                     }
                 }
-                if set.is_empty() {
-                    set.insert(0);
-                }
                 set
             }
-            WindowSelect::Range(a, b) => {
+            WindowSelect::Indices(idxs) => {
                 let mut set = HashSet::new();
-                if n == 0 {
-                    set.insert(0);
-                } else {
-                    let lo = (*a).min(n.saturating_sub(1));
-                    let hi = (*b).min(n.saturating_sub(1));
-                    let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
-                    for i in lo..=hi {
+                for &i in idxs {
+                    if i < n {
                         set.insert(i);
                     }
                 }
                 set
             }
+            WindowSelect::Range(a, b) => {
+                let mut set = HashSet::new();
+                let lo = (*a).min(n.saturating_sub(1));
+                let hi = (*b).min(n.saturating_sub(1));
+                let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
+                for i in lo..=hi {
+                    set.insert(i);
+                }
+                set
+            }
         }
+    }
+
+    /// Per-window sampler time (sum of thread roots for that bucket).
+    pub fn window_times(&self) -> Vec<(usize, Option<i32>, f64)> {
+        let n = self.window_count();
+        let mut out = Vec::with_capacity(n);
+        for i in 0..n {
+            let mut sel = HashSet::new();
+            sel.insert(i);
+            let time: f64 = self.threads.iter().map(|t| t.time_for(&sel)).sum();
+            let id = self.time_windows.get(i).copied();
+            out.push((i, id, time));
+        }
+        out
     }
 
     pub fn get(&self, id: u32) -> Option<&Node> {

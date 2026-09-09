@@ -43,9 +43,11 @@ cargo install --path .
 ```bash
 spark-dump tutorial
 spark-dump dump ./file.sparkprofile
+spark-dump windows ./file.sparkprofile --top 10
 spark-dump plugins ./file.sparkprofile --thread 'Folia Region'
 spark-dump threads ./file.sparkprofile --top 20
 spark-dump profile ./file.sparkprofile --view flat --exclude native --top 40
+spark-dump profile ./file.sparkprofile --windows @3 --view flat --top 40
 spark-dump profile ./file.sparkprofile --view flame --thread Folia
 ```
 
@@ -53,12 +55,13 @@ spark-dump profile ./file.sparkprofile --view flame --thread Folia
 |------|------|
 | `dump` | 自动识别并摘要 |
 | `profile` | `--view all\|flat\|sources\|flame\|summary` |
+| `windows` | Refine 时间窗列表（idx / id / 占比） |
 | `plugins` | 插件/模组占用 |
-| `threads` | 线程耗时排名 |
+| `threads` | 线程耗时排名（支持 `--windows`） |
 | `heap` / `health` / `meta` / `raw` | 堆 / 健康 / 元数据 / JSON |
 | `tutorial` | 内置教程 |
 
-过滤器：`-s`、`--thread`、`--include`、`--exclude`、`--regex`、`--top-threads`、`--windows` …  
+过滤器：`-s`、`--thread`、`--include`、`--exclude`、`--regex`、`--top-threads`、`--windows @N` / `--window-range` …  
 详见 [`TUTORIAL.md`](./TUTORIAL.md)。
 
 ## CI / Release

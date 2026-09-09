@@ -30,6 +30,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Command::Raw(args) => cli::run_raw(args)?,
         Command::Meta(args) => cli::run_meta(args)?,
         Command::Threads(args) => cli::run_threads(args)?,
+        Command::Windows(args) => cli::run_windows(args)?,
         Command::Plugins(args) => cli::run_plugins(args)?,
         Command::Tutorial { topic } => {
             print!("{}", tutorial::render(topic.as_deref()));
